@@ -1,0 +1,179 @@
+// Prisma schema for xPortal — Multi-Tenant Currency Exchange Management SaaS
+// Database: PostgreSQL (Supabase)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  TELLER
+}
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  LOGIN_FAILED
+  SESSION_EXPIRED
+  RATE_UPDATED
+  BRANCH_CREATED
+  BRANCH_UPDATED
+  BRANCH_DEACTIVATED
+  BRANCH_ACTIVATED
+  EMPLOYEE_CREATED
+  EMPLOYEE_UPDATED
+  EMPLOYEE_DISABLED
+  EMPLOYEE_ENABLED
+  TRANSACTION_CREATED
+  TRANSACTION_DELETED
+}
+
+model Branch {
+  id        String   @id @default(cuid())
+  name      String
+  location  String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users        User[]
+  transactions Transaction[]
+
+  @@index([isActive])
+  @@map("branches")
+}
+
+model User {
+  id             String    @id @default(cuid())
+  name           String
+  email          String    @unique
+  passwordHash   String    @map("password")
+  role           Role      @default(TELLER)
+  branchId       String?
+  isActive       Boolean   @default(true)
+  lastActivityAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  branch              Branch?        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  transactions        Transaction[]  @relation("TellerTransactions")
+  auditLogs           AuditLog[]     @relation("AuditActor")
+  exchangeRateUpdates ExchangeRate[] @relation("RateUpdatedBy")
+
+  accounts Account[]
+  sessions Session[]
+
+  @@index([branchId])
+  @@index([role])
+  @@index([isActive])
+  @@index([email])
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model ExchangeRate {
+  id           String   @id @default(cuid())
+  currencyCode String   @unique @map("currency_code") @db.VarChar(3)
+  buyRate      Decimal  @map("buy_rate") @db.Decimal(18, 8)
+  sellRate     Decimal  @map("sell_rate") @db.Decimal(18, 8)
+  updatedById  String?  @map("updated_by")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  updatedBy User? @relation("RateUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([updatedAt])
+  @@map("exchange_rates")
+}
+
+model Transaction {
+  id                String   @id @default(cuid())
+  transactionNumber String   @unique @map("transaction_number")
+  branchId          String   @map("branch_id")
+  tellerId          String   @map("teller_id")
+  sourceCurrency    String   @map("source_currency") @db.VarChar(3)
+  destCurrency      String   @map("dest_currency") @db.VarChar(3)
+  sourceAmount      Decimal  @map("source_amount") @db.Decimal(18, 4)
+  exchangeRate      Decimal  @map("exchange_rate") @db.Decimal(18, 8)
+  destAmount        Decimal  @map("dest_amount") @db.Decimal(18, 4)
+  createdAt         DateTime @default(now())
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  teller User   @relation("TellerTransactions", fields: [tellerId], references: [id], onDelete: Restrict)
+
+  @@index([branchId])
+  @@index([tellerId])
+  @@index([createdAt])
+  @@index([sourceCurrency])
+  @@index([destCurrency])
+  @@index([branchId, createdAt])
+  @@map("transactions")
+}
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  actorId    String?     @map("actor_id")
+  action     AuditAction
+  entityType String      @map("entity_type")
+  entityId   String?     @map("entity_id")
+  oldData    Json?       @map("old_data")
+  newData    Json?       @map("new_data")
+  ipAddress  String?     @map("ip_address")
+  userAgent  String?     @map("user_agent") @db.Text
+  createdAt  DateTime    @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
